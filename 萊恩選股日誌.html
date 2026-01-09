@@ -1,283 +1,1364 @@
-import React, { useState, useMemo } from 'react';
-import { Calculator, TrendingUp, DollarSign, Info, Table, PieChart, ArrowRight, HelpCircle } from 'lucide-react';
-
-// --- 核心計算邏輯 (保持不變，但資料結構優化) ---
-const calculateDCF = (params) => {
-  const { currentValue, growthRate1_5, growthRate6_10, growthRateTerminal, discountRate, marginOfSafety } = params;
-  
-  const g1 = growthRate1_5 / 100;
-  const g2 = growthRate6_10 / 100;
-  const gTerminal = growthRateTerminal / 100;
-  const r = discountRate / 100;
-
-  if (r <= gTerminal) return { isValid: false, intrinsicValue: 0 };
-
-  let futureValues = [];
-  let totalPresentValueStage1 = 0;
-  let previousValue = currentValue;
-
-  // 1-10 年計算
-  for (let i = 1; i <= 10; i++) {
-    let currentGrowthRate = i <= 5 ? g1 : g2;
-    let stageName = i <= 5 ? '短期高速成長 (1-5年)' : '中期過渡成長 (6-10年)';
-    
-    const projectedValue = previousValue * (1 + currentGrowthRate);
-    const discountFactor = 1 / Math.pow((1 + r), i);
-    const presentValue = projectedValue * discountFactor;
-
-    futureValues.push({
-      year: i,
-      stage: stageName,
-      growthRateUsed: (currentGrowthRate * 100),
-      projectedValue: projectedValue,
-      discountFactor: discountFactor,
-      presentValue: presentValue
-    });
-
-    totalPresentValueStage1 += presentValue;
-    previousValue = projectedValue;
-  }
-
-  // 終值計算
-  const finalYearValue = futureValues[futureValues.length - 1].projectedValue;
-  const terminalValue = (finalYearValue * (1 + gTerminal)) / (r - gTerminal);
-  const terminalDiscountFactor = 1 / Math.pow((1 + r), 10);
-  const terminalValuePV = terminalValue * terminalDiscountFactor;
-
-  const intrinsicValue = totalPresentValueStage1 + terminalValuePV;
-  const safetyPrice = intrinsicValue * (1 - marginOfSafety / 100);
-
-  return {
-    isValid: true,
-    tableData: futureValues,
-    terminalValue,
-    terminalValuePV,
-    totalPresentValueStage1,
-    intrinsicValue,
-    safetyPrice,
-    finalYearValue
-  };
-};
-
-const TwoStageDCF = () => {
-  const [showHelp, setShowHelp] = useState(false); // 控制是否顯示說明視窗
-
-  const [inputs, setInputs] = useState({
-    currentValue: 10,       
-    growthRate1_5: 15,      
-    growthRate6_10: 8,     
-    growthRateTerminal: 3,  
-    discountRate: 10,       
-    marginOfSafety: 20,     
-  });
-
-  const calc = useMemo(() => calculateDCF(inputs), [inputs]);
-
-  const handleInputChange = (e) => {
-    const { name, value } = e.target;
-    setInputs(prev => ({ ...prev, [name]: parseFloat(value) || 0 }));
-  };
-
-  const formatNum = (num) => num?.toLocaleString('zh-TW', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
-
-  return (
-    <div className="min-h-screen bg-gray-50 font-sans text-gray-800 p-4 md:p-8">
-      <div className="max-w-6xl mx-auto">
+<!DOCTYPE html>
+<html lang="zh-TW">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>萊恩選股日誌</title>
+    <!-- Tailwind CSS -->
+    <script src="https://cdn.tailwindcss.com"></script>
+    <!-- Lucide Icons -->
+    <script src="https://unpkg.com/lucide@latest"></script>
+    <style>
+        /* Custom scrollbar - Dark Theme */
+        ::-webkit-scrollbar {
+            width: 8px;
+            height: 8px;
+        }
+        ::-webkit-scrollbar-track {
+            background: #0f172a; /* slate-950 */
+        }
+        ::-webkit-scrollbar-thumb {
+            background: #334155; /* slate-700 */
+            border-radius: 4px;
+        }
+        ::-webkit-scrollbar-thumb:hover {
+            background: #475569; /* slate-600 */
+        }
         
-        {/* Header */}
-        <header className="mb-6 border-b pb-4">
-          <h1 className="text-2xl font-bold text-gray-900 flex items-center gap-2">
-            <Calculator className="text-blue-600" />
-            股票估值計算機 (DCF)
-          </h1>
-          <p className="text-gray-500 text-sm mt-1">輸入預測參數，自動計算合理股價</p>
-        </header>
+        .compact-table th, .compact-table td {
+            white-space: nowrap;
+        }
+        
+        /* Modal transitions */
+        .modal {
+            transition: opacity 0.2s ease-in-out;
+            opacity: 0;
+            pointer-events: none;
+        }
+        .modal.active {
+            opacity: 1;
+            pointer-events: auto;
+        }
+        .modal-content {
+            transform: scale(0.95);
+            transition: transform 0.2s ease-in-out;
+        }
+        .modal.active .modal-content {
+            transform: scale(1);
+        }
 
-        <div className="grid grid-cols-1 lg:grid-cols-12 gap-8">
-          
-          {/* 左側：輸入與控制面板 */}
-          <div className="lg:col-span-4 space-y-4">
-            
-            {/* 1. 基礎數據 */}
-            <div className="bg-white p-5 rounded-xl shadow-sm border border-gray-200">
-              <h3 className="font-bold text-gray-700 mb-4 flex items-center gap-2">
-                <DollarSign size={18} /> 起始金額
-              </h3>
-              <div>
-                <label className="block text-sm font-medium text-gray-600 mb-1">今年 EPS 或 自由現金流</label>
-                <input type="number" name="currentValue" value={inputs.currentValue} onChange={handleInputChange} className="w-full p-2 border rounded-lg focus:ring-2 focus:ring-blue-500 outline-none text-lg font-semibold text-gray-800" />
-                <p className="text-xs text-gray-400 mt-1">輸入公司最近一年的每股獲利</p>
-              </div>
-            </div>
+        /* Checkbox style override for Dark Mode */
+        .custom-checkbox {
+            appearance: none;
+            background-color: transparent;
+            margin: 0;
+            font: inherit;
+            color: currentColor;
+            width: 1.15em;
+            height: 1.15em;
+            border: 0.15em solid currentColor;
+            border-radius: 0.15em;
+            display: grid;
+            place-content: center;
+        }
 
-            {/* 2. 成長預測 */}
-            <div className="bg-white p-5 rounded-xl shadow-sm border border-gray-200">
-              <h3 className="font-bold text-gray-700 mb-4 flex items-center gap-2">
-                <TrendingUp size={18} /> 未來成長預測
-              </h3>
-              <div className="space-y-4">
-                <div className="grid grid-cols-2 gap-3">
-                    <div>
-                        <label className="block text-xs font-bold text-blue-600 mb-1">前 5 年成長率 %</label>
-                        <input type="number" name="growthRate1_5" value={inputs.growthRate1_5} onChange={handleInputChange} className="w-full p-2 border border-blue-100 bg-blue-50 rounded-lg outline-none" />
-                    </div>
-                    <div>
-                        <label className="block text-xs font-bold text-indigo-600 mb-1">6-10 年成長率 %</label>
-                        <input type="number" name="growthRate6_10" value={inputs.growthRate6_10} onChange={handleInputChange} className="w-full p-2 border border-indigo-100 bg-indigo-50 rounded-lg outline-none" />
-                    </div>
-                </div>
-                <div>
-                  <label className="block text-sm font-medium text-gray-600 mb-1">10年後永續成長率 %</label>
-                  <input type="number" name="growthRateTerminal" value={inputs.growthRateTerminal} onChange={handleInputChange} className="w-full p-2 border rounded-lg outline-none" />
-                  <p className="text-xs text-gray-400 mt-1">保守通常設 2~3% (通膨率)</p>
-                </div>
-              </div>
-            </div>
+        .custom-checkbox::before {
+            content: "";
+            width: 0.65em;
+            height: 0.65em;
+            transform: scale(0);
+            transition: 120ms transform ease-in-out;
+            box-shadow: inset 1em 1em white; /* Checkmark color */
+            transform-origin: center;
+            clip-path: polygon(14% 44%, 0 65%, 50% 100%, 100% 16%, 80% 0%, 43% 62%);
+        }
 
-            {/* 3. 風險折現 */}
-            <div className="bg-white p-5 rounded-xl shadow-sm border border-gray-200">
-              <div className="flex justify-between items-center mb-4">
-                 <h3 className="font-bold text-gray-700">風險與折扣</h3>
-                 <button onClick={() => setShowHelp(!showHelp)} className="text-blue-500 text-xs flex items-center gap-1 hover:underline"><HelpCircle size={14}/> 這是什麼?</button>
-              </div>
-              
-              {showHelp && (
-                  <div className="bg-blue-50 p-3 rounded text-xs text-blue-800 mb-3 leading-relaxed">
-                      <strong>折現率 (Discount Rate)：</strong>未來的錢不如現在的錢值錢，所以需要打折。風險越高的股票，折現率要設越高 (打折打越兇)。<br/>
-                      <strong>安全邊際：</strong>算出合理價後，再打幾折才買，以防算錯。
-                  </div>
-              )}
+        .custom-checkbox:checked {
+            background-color: currentColor;
+        }
 
-              <div className="space-y-3">
-                <div>
-                  <label className="block text-sm font-medium text-gray-600 mb-1">折現率 (期望報酬率) %</label>
-                  <input type="number" name="discountRate" value={inputs.discountRate} onChange={handleInputChange} className="w-full p-2 border rounded-lg outline-none" />
-                </div>
-                <div>
-                  <label className="block text-sm font-medium text-gray-600 mb-1">安全邊際 %</label>
-                  <input type="number" name="marginOfSafety" value={inputs.marginOfSafety} onChange={handleInputChange} className="w-full p-2 border rounded-lg outline-none" />
-                </div>
-                {!calc.isValid && <p className="text-red-500 text-xs font-bold">⚠️ 折現率必須大於永續成長率</p>}
-              </div>
-            </div>
+        .custom-checkbox:checked::before {
+            transform: scale(1);
+        }
 
-          </div>
+        /* Toast Animation */
+        @keyframes slideIn {
+            from { transform: translateX(100%); opacity: 0; }
+            to { transform: translateX(0); opacity: 1; }
+        }
+        .toast-enter {
+            animation: slideIn 0.3s ease-out forwards;
+        }
+        
+        /* Input autofill fix for dark mode */
+        input:-webkit-autofill,
+        input:-webkit-autofill:hover, 
+        input:-webkit-autofill:focus, 
+        input:-webkit-autofill:active{
+            -webkit-box-shadow: 0 0 0 30px #020617 inset !important;
+            -webkit-text-fill-color: white !important;
+        }
+    </style>
+</head>
+<body class="bg-slate-950 text-slate-300 font-sans pb-20 selection:bg-blue-500 selection:text-white">
 
-          {/* 右側：結果與解釋 */}
-          <div className="lg:col-span-8 space-y-6">
-            
-            {/* A. 最終估值卡片 */}
-            <div className="bg-gradient-to-r from-slate-800 to-slate-900 rounded-2xl shadow-lg p-6 text-white flex flex-col md:flex-row justify-between items-center">
-               <div>
-                   <h2 className="text-slate-400 text-sm uppercase tracking-widest font-semibold mb-1">Intrinsic Value</h2>
-                   <div className="flex items-baseline gap-3">
-                       <span className="text-5xl font-bold">{calc.isValid ? `$${formatNum(calc.intrinsicValue)}` : 'Error'}</span>
-                       <span className="text-lg text-slate-400">合理估值</span>
-                   </div>
-                   <div className="mt-4 flex items-center gap-2">
-                       <span className="bg-green-500/20 text-green-300 px-3 py-1 rounded-full text-sm font-medium border border-green-500/30">
-                           建議買點 (打 {inputs.marginOfSafety} 折): ${formatNum(calc.safetyPrice)}
-                       </span>
-                   </div>
-               </div>
-               
-               {/* 簡易圖表：價值組成 */}
-               {calc.isValid && (
-                   <div className="mt-6 md:mt-0 flex items-center gap-6 bg-slate-800/50 p-4 rounded-xl border border-slate-700">
-                        <div className="text-center">
-                            <div className="text-xs text-slate-400 mb-1">前10年獲利貢獻</div>
-                            <div className="text-xl font-bold text-blue-300">${formatNum(calc.totalPresentValueStage1)}</div>
-                            <div className="text-xs text-blue-300/50">
-                                ({((calc.totalPresentValueStage1/calc.intrinsicValue)*100).toFixed(0)}%)
-                            </div>
-                        </div>
-                        <div className="text-2xl text-slate-600">+</div>
-                        <div className="text-center">
-                            <div className="text-xs text-slate-400 mb-1">10年後永續貢獻</div>
-                            <div className="text-xl font-bold text-purple-300">${formatNum(calc.terminalValuePV)}</div>
-                             <div className="text-xs text-purple-300/50">
-                                ({((calc.terminalValuePV/calc.intrinsicValue)*100).toFixed(0)}%)
-                            </div>
-                        </div>
-                   </div>
-               )}
-            </div>
-
-            {/* B. 白話文解釋邏輯 (新增) */}
-            <div className="bg-blue-50 p-6 rounded-xl border border-blue-100">
-                <h3 className="font-bold text-blue-900 mb-3 flex items-center gap-2">
-                    <Info size={20}/>
-                    這個價格是怎麼算出來的？
-                </h3>
-                <div className="space-y-3 text-sm text-blue-800 leading-relaxed">
-                    <p>
-                        <span className="font-bold bg-white px-2 py-0.5 rounded border border-blue-200">步驟 1</span>
-                        我們假設這間公司今年賺 <strong>${inputs.currentValue}</strong>，且未來 5 年每年成長 <strong>{inputs.growthRate1_5}%</strong>，之後 5 年成長放緩至 <strong>{inputs.growthRate6_10}%</strong>。
-                    </p>
-                    <p>
-                        <span className="font-bold bg-white px-2 py-0.5 rounded border border-blue-200">步驟 2</span>
-                        這些未來賺到的錢，因為要等好幾年才拿得到，我們用 <strong>{inputs.discountRate}%</strong> 的折扣率把它換算成現在的價值。
-                        (例如：明年的 $110，打折後現在只值 $100)。
-                    </p>
-                    <p>
-                        <span className="font-bold bg-white px-2 py-0.5 rounded border border-blue-200">步驟 3</span>
-                        把「未來10年賺的錢 (折現後)」加上「第11年以後永遠賺的錢 (終值)」，加總就是 <strong>${formatNum(calc.intrinsicValue)}</strong>。
-                    </p>
-                </div>
-            </div>
-
-            {/* C. 詳細現金流表格 (簡化版) */}
-            <div className="bg-white rounded-xl shadow-sm border border-gray-200 overflow-hidden">
-              <div className="bg-gray-50 px-6 py-4 border-b border-gray-200">
-                <h3 className="font-semibold text-gray-700 flex items-center gap-2">
-                  <Table size={18} />
-                  年度現金流明細
-                </h3>
-              </div>
-              
-              <div className="overflow-x-auto">
-                <table className="w-full text-sm text-left">
-                  <thead className="bg-gray-50 text-gray-500 font-medium border-b border-gray-200">
-                    <tr>
-                      <th className="px-6 py-3">年度</th>
-                      <th className="px-6 py-3 text-right">預估 EPS (帳面)</th>
-                      <th className="px-6 py-3 text-right text-gray-400 font-normal">折現因子 (打折)</th>
-                      <th className="px-6 py-3 text-right text-blue-700 font-bold">折現後價值 (PV)</th>
-                    </tr>
-                  </thead>
-                  <tbody className="divide-y divide-gray-100">
-                    {calc.tableData.map((row) => (
-                      <tr key={row.year} className="hover:bg-gray-50">
-                        <td className="px-6 py-3 font-medium text-gray-700">
-                            第 {row.year} 年
-                            <span className="block text-xs text-gray-400 font-normal">{row.stage}</span>
-                        </td>
-                        <td className="px-6 py-3 text-right text-gray-600">${formatNum(row.projectedValue)}</td>
-                        <td className="px-6 py-3 text-right text-gray-400">{row.discountFactor.toFixed(3)}</td>
-                        <td className="px-6 py-3 text-right font-bold text-blue-700">${formatNum(row.presentValue)}</td>
-                      </tr>
-                    ))}
-                    
-                    {/* 永續價值列 */}
-                    <tr className="bg-purple-50 border-t border-gray-200">
-                      <td className="px-6 py-4 font-bold text-purple-800">
-                          終值 (第11年以後)
-                          <span className="block text-xs text-purple-600/70 font-normal">永續成長 {inputs.growthRateTerminal}%</span>
-                      </td>
-                      <td className="px-6 py-4 text-right text-purple-600">${formatNum(calc.terminalValue)}</td>
-                      <td className="px-6 py-4 text-right text-gray-400">{(1 / Math.pow((1 + inputs.discountRate/100), 10)).toFixed(3)}</td>
-                      <td className="px-6 py-4 text-right font-bold text-purple-700">${formatNum(calc.terminalValuePV)}</td>
-                    </tr>
-                  </tbody>
-                </table>
-              </div>
-            </div>
-
-          </div>
-        </div>
-      </div>
+    <!-- Tailwind Safelist for Dynamic Classes (Updated for Dark Mode) -->
+    <div class="hidden">
+        <div class="bg-red-900/40 text-red-300 border-red-700 ring-red-500/50"></div>
+        <div class="bg-blue-900/40 text-blue-300 border-blue-700 ring-blue-500/50"></div>
+        <div class="bg-purple-900/40 text-purple-300 border-purple-700 ring-purple-500/50"></div>
+        <div class="bg-orange-900/40 text-orange-300 border-orange-700 ring-orange-500/50"></div>
+        <!-- Pink for Wait Quarter -->
+        <div class="bg-pink-900/40 text-pink-300 border-pink-700 ring-pink-500/50"></div>
+        <!-- Green for Bearish Trend -->
+        <div class="bg-green-900/40 text-green-300 border-green-700 ring-green-500/50"></div>
+        
+        <div class="text-red-400 text-blue-400 text-purple-400 text-orange-400 text-pink-400 text-green-400"></div>
+        <div class="bg-red-500/20 bg-blue-500/20 bg-purple-500/20 bg-orange-500/20 bg-pink-500/20 bg-green-500/20"></div>
+        <!-- Group hover colors for filters -->
+        <div class="group-hover:text-red-400 group-hover:text-blue-400 group-hover:text-purple-400 group-hover:text-orange-400 group-hover:text-pink-400 group-hover:text-green-400"></div>
     </div>
-  );
-};
 
-export default TwoStageDCF;
+    <!-- Toast Container -->
+    <div id="toast-container" class="fixed top-4 right-4 z-50 flex flex-col gap-2 pointer-events-none"></div>
+
+    <!-- Header -->
+    <header class="bg-slate-900 border-b border-slate-800 sticky top-0 z-30 shadow-lg shadow-black/20">
+        <div class="max-w-7xl mx-auto px-4 h-16 flex items-center justify-between gap-3">
+            
+            <div class="flex items-center gap-3 shrink-0">
+                <div class="bg-blue-600 p-1.5 rounded-lg shadow-blue-500/20 shadow-[0_0_15px_rgba(37,99,235,0.3)]">
+                    <i data-lucide="candlestick-chart" class="w-5 h-5 text-white"></i>
+                </div>
+                <div>
+                    <h1 class="text-xl font-bold tracking-tight text-white">萊恩選股日誌</h1>
+                    <p class="text-[10px] text-slate-500 font-mono hidden sm:block tracking-widest uppercase">Ryan's Stock Diary</p>
+                </div>
+                <!-- 顯示連線模式 -->
+                <span id="mode-badge" class="ml-2 text-[10px] bg-amber-900/30 text-amber-500 px-2 py-0.5 rounded border border-amber-700/50 hidden font-bold">LOCAL</span>
+            </div>
+
+            <!-- Date Picker -->
+            <div class="flex items-center bg-slate-950 rounded-lg p-1 border border-slate-800 shadow-inner">
+                <button id="prevDate" class="p-1.5 hover:bg-slate-800 rounded text-slate-500 hover:text-white transition-colors cursor-pointer">
+                    <i data-lucide="chevron-left" class="w-4 h-4"></i>
+                </button>
+                <div class="flex items-center gap-2 px-3 font-mono font-bold text-slate-200 text-sm">
+                    <i data-lucide="calendar" class="w-3.5 h-3.5 text-blue-500"></i>
+                    <input type="date" id="datePicker" class="bg-transparent border-none outline-none w-28 text-center cursor-pointer text-sm font-bold text-slate-200 [color-scheme:dark]">
+                </div>
+                <button id="nextDate" class="p-1.5 hover:bg-slate-800 rounded text-slate-500 hover:text-white transition-colors cursor-pointer">
+                    <i data-lucide="chevron-right" class="w-4 h-4"></i>
+                </button>
+            </div>
+            
+            <div class="flex items-center gap-2">
+                <button id="openDictModal" class="bg-slate-800 border border-slate-700 text-slate-400 hover:text-white hover:bg-slate-700 hover:border-slate-600 p-2 rounded-lg transition-all shadow-sm cursor-pointer active:scale-95 flex items-center gap-2" title="資料管理">
+                    <i data-lucide="database" class="w-4 h-4"></i>
+                    <span class="hidden sm:inline text-xs font-bold">資料管理</span>
+                </button>
+            </div>
+        </div>
+    </header>
+
+    <main class="max-w-7xl mx-auto px-4 py-6 space-y-6">
+        
+        <!-- Summary Section -->
+        <section class="bg-slate-900 rounded-xl shadow-lg border border-slate-800 overflow-hidden">
+            <div class="p-4 border-b border-slate-800 bg-slate-900 flex justify-between items-center">
+                <h2 class="text-base font-bold text-slate-100 flex items-center gap-2">
+                    <i data-lucide="activity" class="w-5 h-5 text-blue-500"></i>
+                    <span id="summaryTitle">觀察彙整</span>
+                </h2>
+                <button id="copySummaryBtn" class="text-xs font-bold flex items-center gap-1.5 px-3 py-1.5 rounded-md transition-all shadow-sm border bg-slate-800 text-slate-300 border-slate-700 hover:bg-slate-700 hover:text-white hover:border-slate-600 cursor-pointer active:scale-95">
+                    <i data-lucide="copy" class="w-3.5 h-3.5"></i>
+                    <span id="copyBtnText">複製摘要</span>
+                </button>
+            </div>
+            
+            <div class="p-4 bg-slate-950/30">
+                <div class="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-6 gap-3">
+                    <!-- Cards -->
+                    <div class="bg-slate-900 rounded-lg p-3 border-l-4 border-red-600 shadow-md flex flex-col gap-2 ring-1 ring-white/5">
+                        <div class="flex items-center gap-1.5 text-red-500 font-bold text-xs uppercase tracking-wide">
+                            <i data-lucide="trending-up" class="w-3.5 h-3.5"></i> 突破月線
+                        </div>
+                        <div id="summaryBreakMonth" class="flex flex-wrap gap-1.5 content-start min-h-[1.5rem]"><span class="text-slate-600 text-[10px]">-</span></div>
+                    </div>
+                    <div class="bg-slate-900 rounded-lg p-3 border-l-4 border-blue-600 shadow-md flex flex-col gap-2 ring-1 ring-white/5">
+                        <div class="flex items-center gap-1.5 text-blue-500 font-bold text-xs uppercase tracking-wide">
+                            <i data-lucide="activity" class="w-3.5 h-3.5"></i> 突破季線
+                        </div>
+                        <div id="summaryBreakQuarter" class="flex flex-wrap gap-1.5 content-start min-h-[1.5rem]"><span class="text-slate-600 text-[10px]">-</span></div>
+                    </div>
+                    <div class="bg-slate-900 rounded-lg p-3 border-l-4 border-purple-600 shadow-md flex flex-col gap-2 ring-1 ring-white/5">
+                        <div class="flex items-center gap-1.5 text-purple-500 font-bold text-xs uppercase tracking-wide">
+                            <i data-lucide="git-merge" class="w-3.5 h-3.5"></i> 均線糾結
+                        </div>
+                        <div id="summaryMaEntangle" class="flex flex-wrap gap-1.5 content-start min-h-[1.5rem]"><span class="text-slate-600 text-[10px]">-</span></div>
+                    </div>
+                    <div class="bg-slate-900 rounded-lg p-3 border-l-4 border-orange-600 shadow-md flex flex-col gap-2 ring-1 ring-white/5">
+                        <div class="flex items-center gap-1.5 text-orange-500 font-bold text-xs uppercase tracking-wide">
+                            <i data-lucide="clock" class="w-3.5 h-3.5"></i> 等待月線
+                        </div>
+                        <div id="summaryWaitBreakMonth" class="flex flex-wrap gap-1.5 content-start min-h-[1.5rem]"><span class="text-slate-600 text-[10px]">-</span></div>
+                    </div>
+                    <div class="bg-slate-900 rounded-lg p-3 border-l-4 border-pink-600 shadow-md flex flex-col gap-2 ring-1 ring-white/5">
+                        <div class="flex items-center gap-1.5 text-pink-500 font-bold text-xs uppercase tracking-wide">
+                            <i data-lucide="clock" class="w-3.5 h-3.5"></i> 等待季線
+                        </div>
+                        <div id="summaryWaitBreakQuarter" class="flex flex-wrap gap-1.5 content-start min-h-[1.5rem]"><span class="text-slate-600 text-[10px]">-</span></div>
+                    </div>
+                    <!-- 空方趨勢 -->
+                    <div class="bg-slate-900 rounded-lg p-3 border-l-4 border-green-600 shadow-md flex flex-col gap-2 ring-1 ring-white/5">
+                        <div class="flex items-center gap-1.5 text-green-500 font-bold text-xs uppercase tracking-wide">
+                            <i data-lucide="trending-down" class="w-3.5 h-3.5"></i> 空方趨勢
+                        </div>
+                        <div id="summaryBearishTrend" class="flex flex-wrap gap-1.5 content-start min-h-[1.5rem]"><span class="text-slate-600 text-[10px]">-</span></div>
+                    </div>
+                </div>
+            </div>
+        </section>
+
+        <div class="grid grid-cols-1 md:grid-cols-2 gap-6">
+            <!-- Quick Add Section -->
+            <section class="bg-slate-900 rounded-xl shadow-md border border-slate-800 overflow-hidden relative group">
+                <div class="absolute top-0 left-0 w-1 h-full bg-blue-600 group-hover:w-1.5 transition-all"></div>
+                <div class="p-4">
+                    <h3 class="text-sm font-bold text-white mb-3 uppercase tracking-wider flex items-center gap-2">
+                        <div class="p-1 bg-blue-500/10 rounded text-blue-500 border border-blue-500/20">
+                            <i data-lucide="plus" class="w-4 h-4"></i>
+                        </div>
+                        單筆新增
+                    </h3>
+                    <form id="quickAddForm" class="flex flex-col gap-3">
+                        <div class="grid grid-cols-5 gap-3">
+                            <div class="col-span-2">
+                                <input type="text" id="quickStockCode" class="w-full px-3 py-2 bg-slate-950 border border-slate-700 text-white rounded-md focus:ring-1 focus:ring-blue-500 focus:border-blue-500 font-mono text-sm font-bold text-center placeholder-slate-600 transition-all" placeholder="代號" autocomplete="off">
+                            </div>
+                            <div class="col-span-3">
+                                <input type="text" id="quickStockName" class="w-full px-3 py-2 bg-slate-800/50 border border-slate-800 text-slate-400 rounded-md text-sm font-medium" placeholder="名稱 (自動帶入)" readonly>
+                                <input type="hidden" id="quickStockSector">
+                            </div>
+                        </div>
+                        <div>
+                            <div class="grid grid-cols-3 sm:grid-cols-6 gap-2 mb-3">
+                                <button type="button" class="quick-condition-btn text-[11px] font-bold px-2 py-2 rounded-md border bg-slate-800 text-slate-500 border-slate-700 hover:bg-slate-700 hover:text-slate-300 transition-all cursor-pointer shadow-sm" data-key="breakMonth" data-color="red">突破月線</button>
+                                <button type="button" class="quick-condition-btn text-[11px] font-bold px-2 py-2 rounded-md border bg-slate-800 text-slate-500 border-slate-700 hover:bg-slate-700 hover:text-slate-300 transition-all cursor-pointer shadow-sm" data-key="breakQuarter" data-color="blue">突破季線</button>
+                                <button type="button" class="quick-condition-btn text-[11px] font-bold px-2 py-2 rounded-md border bg-slate-800 text-slate-500 border-slate-700 hover:bg-slate-700 hover:text-slate-300 transition-all cursor-pointer shadow-sm" data-key="maEntangle" data-color="purple">均線糾結</button>
+                                <button type="button" class="quick-condition-btn text-[11px] font-bold px-2 py-2 rounded-md border bg-slate-800 text-slate-500 border-slate-700 hover:bg-slate-700 hover:text-slate-300 transition-all cursor-pointer shadow-sm" data-key="waitBreakMonth" data-color="orange">等待月線</button>
+                                <button type="button" class="quick-condition-btn text-[11px] font-bold px-2 py-2 rounded-md border bg-slate-800 text-slate-500 border-slate-700 hover:bg-slate-700 hover:text-slate-300 transition-all cursor-pointer shadow-sm" data-key="waitBreakQuarter" data-color="pink">等待季線</button>
+                                <button type="button" class="quick-condition-btn text-[11px] font-bold px-2 py-2 rounded-md border bg-slate-800 text-slate-500 border-slate-700 hover:bg-slate-700 hover:text-slate-300 transition-all cursor-pointer shadow-sm" data-key="bearishTrend" data-color="green">空方趨勢</button>
+                            </div>
+                            <button type="submit" id="quickAddBtn" disabled class="w-full px-4 py-2.5 bg-blue-700 hover:bg-blue-600 text-white rounded-md font-bold shadow-lg shadow-blue-900/20 disabled:opacity-50 disabled:cursor-not-allowed text-xs transition-all cursor-pointer flex items-center justify-center gap-2 active:scale-[0.98]">
+                                <i data-lucide="check" class="w-4 h-4"></i> 加入觀察 (Enter)
+                            </button>
+                        </div>
+                    </form>
+                    <div id="quickNotFoundMsg" class="hidden text-xs text-red-400 font-bold mt-2 text-center bg-red-900/20 border border-red-900/50 py-1.5 rounded">⚠️ 查無資料，請確認代號</div>
+                </div>
+            </section>
+
+            <!-- Batch Add Section -->
+            <section class="bg-slate-900 rounded-xl shadow-md border border-slate-800 overflow-hidden relative group">
+                <div class="absolute top-0 left-0 w-1 h-full bg-slate-600 group-hover:w-1.5 transition-all"></div>
+                <div class="p-4">
+                    <h3 class="text-sm font-bold text-white mb-3 uppercase tracking-wider flex items-center gap-2">
+                        <div class="p-1 bg-slate-800 rounded text-slate-400 border border-slate-700">
+                            <i data-lucide="layers" class="w-4 h-4"></i>
+                        </div>
+                        批次匯入
+                    </h3>
+                    <div class="space-y-3">
+                        <div class="grid grid-cols-3 sm:grid-cols-6 gap-2">
+                            <button type="button" class="batch-condition-btn text-[11px] font-bold px-2 py-2 rounded-md border bg-slate-800 text-slate-500 border-slate-700 hover:bg-slate-700 hover:text-slate-300 transition-all cursor-pointer shadow-sm" data-key="breakMonth" data-color="red">突破月線</button>
+                            <button type="button" class="batch-condition-btn text-[11px] font-bold px-2 py-2 rounded-md border bg-slate-800 text-slate-500 border-slate-700 hover:bg-slate-700 hover:text-slate-300 transition-all cursor-pointer shadow-sm" data-key="breakQuarter" data-color="blue">突破季線</button>
+                            <button type="button" class="batch-condition-btn text-[11px] font-bold px-2 py-2 rounded-md border bg-slate-800 text-slate-500 border-slate-700 hover:bg-slate-700 hover:text-slate-300 transition-all cursor-pointer shadow-sm" data-key="maEntangle" data-color="purple">均線糾結</button>
+                            <button type="button" class="batch-condition-btn text-[11px] font-bold px-2 py-2 rounded-md border bg-slate-800 text-slate-500 border-slate-700 hover:bg-slate-700 hover:text-slate-300 transition-all cursor-pointer shadow-sm" data-key="waitBreakMonth" data-color="orange">等待月線</button>
+                            <button type="button" class="batch-condition-btn text-[11px] font-bold px-2 py-2 rounded-md border bg-slate-800 text-slate-500 border-slate-700 hover:bg-slate-700 hover:text-slate-300 transition-all cursor-pointer shadow-sm" data-key="waitBreakQuarter" data-color="pink">等待季線</button>
+                            <button type="button" class="batch-condition-btn text-[11px] font-bold px-2 py-2 rounded-md border bg-slate-800 text-slate-500 border-slate-700 hover:bg-slate-700 hover:text-slate-300 transition-all cursor-pointer shadow-sm" data-key="bearishTrend" data-color="green">空方趨勢</button>
+                        </div>
+                        <div class="flex gap-2 items-stretch h-[42px]">
+                            <textarea id="batchInput" class="flex-1 px-3 py-2 bg-slate-950 border border-slate-700 rounded-md text-xs focus:ring-2 focus:ring-slate-500 focus:border-slate-500 outline-none resize-none font-mono leading-normal placeholder:text-slate-600 placeholder:pt-0.5 text-slate-300" placeholder="輸入代號，以空白分隔 (例如: 2330 2317)"></textarea>
+                            <button id="addBatchBtn" disabled class="px-5 bg-slate-700 hover:bg-slate-600 text-white rounded-md font-bold shadow-md disabled:opacity-50 disabled:cursor-not-allowed text-xs transition-all cursor-pointer whitespace-nowrap active:scale-95 flex items-center">
+                                加入
+                            </button>
+                        </div>
+                    </div>
+                </div>
+            </section>
+        </div>
+
+        <!-- Column Selection & Table -->
+        <section>
+            <!-- Control Bar -->
+            <div class="bg-slate-900 border border-slate-800 rounded-xl p-4 shadow-md mb-4">
+                <div class="flex flex-col lg:flex-row justify-between items-start lg:items-center gap-4">
+                    <div class="flex items-center gap-3 w-full lg:w-auto overflow-x-auto pb-1 lg:pb-0 scrollbar-hide">
+                        <div class="text-xs font-bold text-slate-500 uppercase tracking-wider shrink-0">篩選欄位:</div>
+                        
+                        <!-- 全選/全取消按鈕 -->
+                        <div class="flex items-center gap-1 shrink-0">
+                            <button id="btnSelectAll" class="text-[10px] px-2 py-1 bg-slate-800 text-slate-400 rounded border border-slate-700 hover:bg-slate-700 hover:text-white font-bold transition-colors">全選</button>
+                            <button id="btnSelectNone" class="text-[10px] px-2 py-1 bg-slate-800 text-slate-400 rounded border border-slate-700 hover:bg-slate-700 hover:text-white font-bold transition-colors">取消</button>
+                        </div>
+                        <div class="w-px h-5 bg-slate-700 mx-1 shrink-0"></div>
+
+                        <div class="flex gap-4 shrink-0" id="columnFilters">
+                            <label class="flex items-center gap-1.5 cursor-pointer group">
+                                <input type="checkbox" value="breakMonth" class="custom-checkbox text-red-500" checked>
+                                <span class="text-xs font-bold text-red-500 group-hover:text-red-400 transition-colors">突破月線</span>
+                            </label>
+                            <label class="flex items-center gap-1.5 cursor-pointer group">
+                                <input type="checkbox" value="breakQuarter" class="custom-checkbox text-blue-500" checked>
+                                <span class="text-xs font-bold text-blue-500 group-hover:text-blue-400 transition-colors">突破季線</span>
+                            </label>
+                            <label class="flex items-center gap-1.5 cursor-pointer group">
+                                <input type="checkbox" value="maEntangle" class="custom-checkbox text-purple-500" checked>
+                                <span class="text-xs font-bold text-purple-500 group-hover:text-purple-400 transition-colors">均線糾結</span>
+                            </label>
+                            <label class="flex items-center gap-1.5 cursor-pointer group">
+                                <input type="checkbox" value="waitBreakMonth" class="custom-checkbox text-orange-500" checked>
+                                <span class="text-xs font-bold text-orange-500 group-hover:text-orange-400 transition-colors">等待月線</span>
+                            </label>
+                            <label class="flex items-center gap-1.5 cursor-pointer group">
+                                <input type="checkbox" value="waitBreakQuarter" class="custom-checkbox text-pink-500" checked>
+                                <span class="text-xs font-bold text-pink-500 group-hover:text-pink-400 transition-colors">等待季線</span>
+                            </label>
+                            <label class="flex items-center gap-1.5 cursor-pointer group">
+                                <input type="checkbox" value="bearishTrend" class="custom-checkbox text-green-500" checked>
+                                <span class="text-xs font-bold text-green-500 group-hover:text-green-400 transition-colors">空方趨勢</span>
+                            </label>
+                        </div>
+                    </div>
+                    
+                    <!-- Search -->
+                    <div class="relative w-full lg:w-64 mt-2 lg:mt-0 shrink-0">
+                        <i data-lucide="search" class="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-slate-500"></i>
+                        <input type="text" id="searchInput" placeholder="搜尋代號、名稱、產業..." class="w-full pl-9 pr-3 py-2 bg-slate-950 border border-slate-700 rounded-lg text-sm text-slate-200 focus:ring-2 focus:ring-blue-600 focus:border-blue-600 outline-none transition-all placeholder-slate-600">
+                    </div>
+                </div>
+            </div>
+
+            <!-- Empty State -->
+            <div id="emptyState" class="hidden bg-slate-900 border-2 border-dashed border-slate-800 rounded-xl p-12 text-center">
+                <div class="w-16 h-16 bg-slate-800/50 rounded-full flex items-center justify-center mx-auto mb-4">
+                    <i data-lucide="list-plus" class="w-8 h-8 text-slate-600"></i>
+                </div>
+                <p class="text-slate-400 font-bold text-base mb-1">今日尚無紀錄</p>
+                <p class="text-slate-600 text-xs mb-4">開始新增您關注的股票吧！</p>
+                <button id="loadDefaultsBtn" class="text-blue-500 hover:text-blue-400 font-bold text-sm hover:underline cursor-pointer">
+                    📥 載入範例資料
+                </button>
+            </div>
+
+            <!-- Table Container -->
+            <div id="tableContainer" class="bg-slate-900 border border-slate-800 rounded-xl shadow-lg overflow-hidden inline-block min-w-min max-w-full hidden flex flex-col">
+                <div class="p-4 border-b border-slate-800 bg-slate-900 flex items-center justify-between gap-2 shrink-0">
+                    <div class="flex items-center gap-2 text-white">
+                        <i data-lucide="table" class="w-4 h-4 text-blue-500"></i>
+                        <h3 class="text-sm font-bold"><span id="tableTitleDate"></span> 即時觀察清單</h3>
+                        <span id="stockCount" class="text-xs text-slate-500 font-mono"></span>
+                    </div>
+                    <!-- 排序按鈕 -->
+                    <button id="toggleSortBtn" class="flex items-center gap-1 text-[11px] font-bold text-slate-400 hover:text-white px-2 py-1 rounded hover:bg-slate-800 transition-colors" title="切換排序">
+                        <i data-lucide="arrow-up-down" class="w-3 h-3"></i>
+                        <span id="sortLabel">按代號</span>
+                    </button>
+                </div>
+                <div class="overflow-x-auto overflow-y-auto max-h-[600px]">
+                    <table class="w-auto text-left border-collapse whitespace-nowrap compact-table">
+                        <thead id="tableHead" class="sticky top-0 z-20 shadow-md">
+                            <!-- Headers injected by JS -->
+                        </thead>
+                        <tbody id="stockTableBody" class="divide-y divide-slate-800/50 bg-slate-900">
+                            <!-- Rows inserted by JS -->
+                        </tbody>
+                    </table>
+                </div>
+            </div>
+        </section>
+    </main>
+
+    <!-- Delete Confirmation Modal -->
+    <div id="deleteConfirmModal" class="modal fixed inset-0 bg-black/70 backdrop-blur-sm z-50 flex items-center justify-center p-4">
+        <div class="modal-content bg-slate-900 rounded-xl shadow-2xl border border-slate-800 w-full max-w-xs overflow-hidden p-6 text-center transform transition-all">
+            <div class="w-12 h-12 rounded-full bg-red-900/30 flex items-center justify-center mx-auto mb-4 ring-8 ring-red-900/10">
+                <i data-lucide="trash-2" class="w-6 h-6 text-red-500"></i>
+            </div>
+            <h3 class="text-lg font-bold text-white mb-2">確定刪除?</h3>
+            <p class="text-sm text-slate-400 mb-6 leading-relaxed">此動作無法復原，確定要從清單中移除這檔股票嗎？</p>
+            <div class="flex gap-3 justify-center">
+                <button class="close-modal px-4 py-2 bg-slate-800 border border-slate-700 text-slate-300 hover:bg-slate-700 hover:text-white rounded-lg font-bold text-sm transition-colors cursor-pointer w-full">取消</button>
+                <button id="confirmDeleteBtn" class="px-4 py-2 bg-red-600 text-white hover:bg-red-500 rounded-lg font-bold text-sm transition-colors shadow-md cursor-pointer w-full flex items-center justify-center gap-2">
+                    確認
+                </button>
+            </div>
+        </div>
+    </div>
+
+    <!-- Dictionary Modal -->
+    <div id="dictModal" class="modal fixed inset-0 bg-black/70 backdrop-blur-sm z-50 flex items-center justify-center p-4">
+        <div class="modal-content bg-slate-900 rounded-xl shadow-2xl border border-slate-800 w-full max-w-lg overflow-hidden flex flex-col max-h-[85vh]">
+            <div class="px-6 py-4 border-b border-slate-800 flex justify-between items-center bg-slate-900">
+                <h3 class="text-base font-bold text-white flex items-center gap-2">
+                    <i data-lucide="database" class="w-4 h-4 text-blue-500"></i>
+                    管理股票清單
+                </h3>
+                <button class="close-modal cursor-pointer p-1 rounded hover:bg-slate-800 text-slate-500 hover:text-white"><i data-lucide="x" class="w-5 h-5"></i></button>
+            </div>
+            <div class="p-6 overflow-y-auto">
+                <!-- Config Warning (New) -->
+                <div id="configWarning" class="bg-amber-900/20 border border-amber-800/50 rounded-lg p-4 mb-4 hidden">
+                    <p class="text-xs font-bold text-amber-500 mb-1">注意：Firebase 設定</p>
+                    <p class="text-xs text-amber-300/80 leading-relaxed">
+                        您已切換為本地模式。若要連線到您的 Firebase (<code>stock-6c6ad...</code>)，請下載檔案並填入您的 Firebase Config。
+                    </p>
+                </div>
+
+                <div class="bg-blue-900/20 border border-blue-800/50 rounded-lg p-4 mb-4">
+                    <p class="text-xs font-bold text-blue-400 mb-1 flex items-center gap-1.5">
+                        <i data-lucide="info" class="w-3.5 h-3.5"></i>
+                        系統內建資料庫
+                    </p>
+                    <p class="text-xs text-blue-300/80 leading-relaxed">
+                        系統已內建約 1300 檔常用個股資料。您只需在新增時輸入代號即可自動帶出名稱與產業。下方可額外擴充您的自定義清單。
+                    </p>
+                </div>
+                <div class="space-y-6">
+                     <!-- Backup/Restore -->
+                    <div class="bg-indigo-900/20 p-4 rounded-lg border border-indigo-800/50">
+                        <h4 class="text-xs font-bold text-indigo-400 mb-2 flex items-center gap-2">
+                            <i data-lucide="save" class="w-3.5 h-3.5"></i> 備份與還原
+                        </h4>
+                        <div class="flex gap-2">
+                            <button onclick="window.exportData()" class="flex-1 px-3 py-1.5 bg-slate-800 border border-indigo-500/30 text-indigo-300 rounded text-xs font-bold hover:bg-slate-700 hover:text-indigo-200 transition-colors flex items-center justify-center gap-1">
+                                <i data-lucide="download" class="w-3 h-3"></i> 匯出 JSON
+                            </button>
+                            <button onclick="document.getElementById('importFile').click()" class="flex-1 px-3 py-1.5 bg-indigo-600 text-white rounded text-xs font-bold hover:bg-indigo-500 transition-colors flex items-center justify-center gap-1">
+                                <i data-lucide="upload" class="w-3 h-3"></i> 匯入 JSON
+                            </button>
+                            <input type="file" id="importFile" class="hidden" accept=".json" onchange="window.importData(this)">
+                        </div>
+                    </div>
+                    
+                    <!-- Dictionary Input -->
+                    <div>
+                        <div class="flex justify-between items-end mb-1">
+                            <label class="text-xs font-bold text-slate-400">擴充清單 (Excel 貼上)</label>
+                            <span id="dictPreviewBadge" class="text-[10px] font-bold text-blue-400 bg-blue-900/30 px-2 py-0.5 rounded-full border border-blue-800">
+                                預覽：0 筆
+                            </span>
+                        </div>
+                        <textarea id="dictInput" class="w-full h-32 border border-slate-700 bg-slate-950 rounded-lg p-3 font-mono text-xs focus:ring-2 focus:ring-blue-600 focus:border-blue-600 outline-none whitespace-pre leading-relaxed text-slate-300 placeholder-slate-600" placeholder="格式: 代號 名稱 產業&#10;2330 台積電 半導體&#10;2317 鴻海 其他電子"></textarea>
+                        <div class="flex justify-between items-center mt-2">
+                             <span id="dbCountDisplay" class="text-[10px] text-slate-500">自定義資料庫：0 筆</span>
+                             <button id="saveDictBtn" disabled class="px-4 py-1.5 bg-slate-800 hover:bg-slate-700 text-white rounded text-xs font-bold disabled:opacity-50 transition-all shadow-sm">
+                                更新資料庫
+                            </button>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Firebase Logic -->
+    <script type="module">
+        import { initializeApp } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-app.js";
+        import { getAuth, signInAnonymously, onAuthStateChanged, signInWithCustomToken } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-auth.js";
+        import { getFirestore, collection, doc, setDoc, deleteDoc, onSnapshot, query, serverTimestamp, writeBatch } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-firestore.js";
+
+        // --- 使用者自定義設定 (下載後請填入這裡) ---
+        // 若要使用您自己的 Firebase，請取消下方註解並填入您的 Config
+        // const USER_FIREBASE_CONFIG = {
+        //    apiKey: "YOUR_API_KEY",
+        //    authDomain: "stock-6c6ad.firebaseapp.com",
+        //    projectId: "stock-6c6ad",
+        //    storageBucket: "stock-6c6ad.appspot.com",
+        //    messagingSenderId: "...",
+        //    appId: "..."
+        // };
+
+        // Global Variables
+        let user = null;
+        let stocks = [];
+        let userDictionary = {};
+        let stockToDeleteId = null; 
+        let selectedDate = new Date().toISOString().slice(0, 10);
+        let sortMethod = 'code'; 
+        let useLocalMode = false;
+        let db = null;
+        let appId = 'default-app-id';
+
+        const getLocalISODate = () => {
+            const d = new Date();
+            const offset = d.getTimezoneOffset() * 60000;
+            return new Date(d - offset).toISOString().slice(0, 10);
+        };
+        selectedDate = getLocalISODate();
+
+        // --- Data Import ---
+        const RAW_STOCK_DATA = `1101	台泥	水泥
+1102	亞泥	水泥
+1216	統一	食品
+2330	台積電	半導體
+2317	鴻海	其他電子
+2454	聯發科	半導體
+2303	聯電	半導體
+2881	富邦金	金融保險
+2882	國泰金	金融保險
+1301	台塑	塑膠
+1303	南亞	塑膠
+2002	中鋼	鋼鐵
+2603	長榮	航運
+2609	陽明	航運
+2615	萬海	航運
+912000	晨訊科-DR	存託憑證`;
+
+        const BUILTIN_STOCKS = {};
+        
+        RAW_STOCK_DATA.trim().split('\n').forEach(line => {
+            const parts = line.trim().split(/[ \t]+/); 
+            if (parts.length >= 2) {
+                const code = parts[0];
+                const name = parts[1];
+                const sector = parts.length > 2 ? parts[2] : '';
+                BUILTIN_STOCKS[code] = { name, sector };
+            }
+        });
+
+        const DEFAULT_STOCKS = [
+            { code: '2330', name: '台積電', sector: '半導體' },
+            { code: '2317', name: '鴻海', sector: '其他電子' },
+            { code: '2454', name: '聯發科', sector: '半導體' }
+        ];
+
+        async function initApp() {
+            try {
+                // Priority: User Config > Env Config > Local Mode
+                let configToUse = null;
+                
+                if (typeof USER_FIREBASE_CONFIG !== 'undefined') {
+                    configToUse = USER_FIREBASE_CONFIG;
+                } else if (typeof __firebase_config !== 'undefined' && __firebase_config !== '{}') {
+                    configToUse = JSON.parse(__firebase_config);
+                }
+
+                if (configToUse) {
+                    const app = initializeApp(configToUse);
+                    const auth = getAuth(app);
+                    db = getFirestore(app);
+                    appId = typeof __app_id !== 'undefined' ? __app_id : 'default-app-id';
+
+                    if (typeof __initial_auth_token !== 'undefined' && __initial_auth_token) {
+                        await signInWithCustomToken(auth, __initial_auth_token);
+                    } else {
+                        await signInAnonymously(auth);
+                    }
+
+                    onAuthStateChanged(auth, (currentUser) => {
+                        user = currentUser;
+                        if (user) initDataListeners();
+                    });
+                } else {
+                    throw new Error("No Valid Firebase Config");
+                }
+            } catch (e) {
+                console.warn("Initializing Local Mode:", e);
+                useLocalMode = true;
+                user = { uid: 'local_user' };
+                document.getElementById('mode-badge').classList.remove('hidden');
+                document.getElementById('configWarning').classList.remove('hidden'); // Show hint in modal
+                initDataListeners();
+            }
+        }
+        initApp();
+
+        function initDataListeners() {
+            if (!useLocalMode) {
+                const stocksQuery = query(collection(db, 'artifacts', appId, 'users', user.uid, 'stocks'));
+                onSnapshot(stocksQuery, (snapshot) => {
+                    stocks = snapshot.docs.map(doc => {
+                        const data = doc.data();
+                        let dateStr = data.dateStr || getLocalISODate(); 
+                        return { id: doc.id, ...data, dateStr };
+                    });
+                    renderApp();
+                });
+
+                const dictQuery = query(collection(db, 'artifacts', appId, 'users', user.uid, 'stockDictionary'));
+                onSnapshot(dictQuery, (snapshot) => {
+                    userDictionary = {};
+                    snapshot.docs.forEach(doc => {
+                        const data = doc.data();
+                        if (data.code) userDictionary[data.code] = { name: data.name, sector: data.sector };
+                    });
+                    updateDictCount();
+                });
+            } else {
+                loadLocalStocks();
+                loadLocalDict();
+            }
+        }
+
+        function loadLocalStocks() {
+            const data = localStorage.getItem('stock_diary_data');
+            if (data) {
+                stocks = JSON.parse(data);
+            } else {
+                stocks = [];
+            }
+            renderApp();
+        }
+
+        function saveLocalStocks() {
+            localStorage.setItem('stock_diary_data', JSON.stringify(stocks));
+            renderApp();
+        }
+
+        function loadLocalDict() {
+            const data = localStorage.getItem('stock_diary_dict');
+            if (data) userDictionary = JSON.parse(data);
+            updateDictCount();
+        }
+
+        function saveLocalDict() {
+            localStorage.setItem('stock_diary_dict', JSON.stringify(userDictionary));
+            updateDictCount();
+        }
+
+        async function saveStockData(stockId, payload, isMerge = true) {
+            if (!useLocalMode) {
+                await setDoc(doc(db, 'artifacts', appId, 'users', user.uid, 'stocks', stockId), payload, { merge: isMerge });
+            } else {
+                const existingIndex = stocks.findIndex(s => s.id === stockId);
+                if (existingIndex >= 0 && isMerge) {
+                    stocks[existingIndex] = { ...stocks[existingIndex], ...payload };
+                } else if (existingIndex >= 0 && !isMerge) {
+                    stocks[existingIndex] = { id: stockId, ...payload };
+                } else {
+                    stocks.push({ id: stockId, ...payload });
+                }
+                saveLocalStocks();
+            }
+        }
+
+        async function removeStockData(stockId) {
+            if (!useLocalMode) {
+                await deleteDoc(doc(db, 'artifacts', appId, 'users', user.uid, 'stocks', stockId));
+            } else {
+                stocks = stocks.filter(s => s.id !== stockId);
+                saveLocalStocks();
+            }
+        }
+
+        function renderApp() {
+            updateDateDisplay();
+            renderTable();
+            renderSummary();
+        }
+
+        function updateDateDisplay() {
+            const datePicker = document.getElementById('datePicker');
+            const summaryTitle = document.getElementById('summaryTitle');
+            const tableTitleDate = document.getElementById('tableTitleDate');
+            
+            if (datePicker) datePicker.value = selectedDate;
+            
+            const [y, m, d] = selectedDate.split('-');
+            const display = `${y}/${m}/${d}`;
+            
+            if (summaryTitle) summaryTitle.textContent = `${display} 觀察彙整`;
+            if (tableTitleDate) tableTitleDate.textContent = display;
+        }
+
+        function formatDateShort(dateStr) {
+            if (!dateStr) return '';
+            const [y, m, d] = dateStr.split('-');
+            return `${m}/${d}`;
+        }
+
+        function showToast(message, type = 'success') {
+            const container = document.getElementById('toast-container');
+            const toast = document.createElement('div');
+            
+            let icon = '';
+            let bgClass = '';
+            
+            if (type === 'success') {
+                icon = `<i data-lucide="check-circle" class="w-5 h-5 text-emerald-400"></i>`;
+                bgClass = 'bg-slate-800 border-slate-700 text-slate-100 shadow-emerald-900/20';
+            } else if (type === 'error') {
+                icon = `<i data-lucide="alert-circle" class="w-5 h-5 text-red-400"></i>`;
+                bgClass = 'bg-slate-800 border-slate-700 text-slate-100 shadow-red-900/20';
+            } else {
+                icon = `<i data-lucide="info" class="w-5 h-5 text-blue-400"></i>`;
+                bgClass = 'bg-slate-800 border-slate-700 text-slate-100 shadow-blue-900/20';
+            }
+            
+            toast.className = `flex items-center gap-3 px-4 py-3 rounded-lg shadow-xl border ${bgClass} toast-enter min-w-[280px]`;
+            toast.innerHTML = `
+                ${icon}
+                <div class="text-sm font-bold">${message}</div>
+            `;
+            
+            container.appendChild(toast);
+            lucide.createIcons();
+            
+            setTimeout(() => {
+                toast.style.opacity = '0';
+                toast.style.transform = 'translateY(-10px)';
+                toast.style.transition = 'all 0.3s ease';
+                setTimeout(() => toast.remove(), 300);
+            }, 3000);
+        }
+
+        const COLUMN_CONFIG = {
+            breakMonth: { label: '突破月線', color: 'red', icon: 'trending-up' },
+            breakQuarter: { label: '突破季線', color: 'blue', icon: 'activity' },
+            maEntangle: { label: '均線糾結', color: 'purple', icon: 'git-merge' },
+            waitBreakMonth: { label: '等待月線', color: 'orange', icon: 'clock' },
+            waitBreakQuarter: { label: '等待季線', color: 'pink', icon: 'clock' },
+            bearishTrend: { label: '空方趨勢', color: 'green', icon: 'trending-down' }
+        };
+
+        function renderTable() {
+            const currentDayStocks = stocks.filter(s => s.dateStr === selectedDate);
+            const searchInput = document.getElementById('searchInput');
+            
+            if (sortMethod === 'code') {
+                currentDayStocks.sort((a, b) => a.code.localeCompare(b.code));
+                document.getElementById('sortLabel').textContent = '按代號';
+            } else {
+                const getTime = (item) => {
+                     if (item.createdAt && item.createdAt.seconds) return item.createdAt.seconds; 
+                     return new Date(item.createdAt).getTime() || 0;
+                };
+                currentDayStocks.sort((a, b) => getTime(b) - getTime(a));
+                document.getElementById('sortLabel').textContent = '按時間';
+            }
+
+            if(!searchInput) return;
+            
+            const searchTerm = searchInput.value.toLowerCase();
+            
+            const activeColumns = [];
+            document.querySelectorAll('#columnFilters input:checked').forEach(cb => {
+                activeColumns.push(cb.value);
+            });
+
+            const filtered = currentDayStocks.filter(s => {
+                const matchSearch = s.code.includes(searchTerm) || 
+                                  s.name.toLowerCase().includes(searchTerm) ||
+                                  (s.sector && s.sector.includes(searchTerm));
+                
+                if (!matchSearch) return false;
+                if (activeColumns.length === 0) return false;
+                return activeColumns.some(key => s[key] === true);
+            });
+
+            const thead = document.getElementById('tableHead');
+            const tbody = document.getElementById('stockTableBody');
+            const emptyState = document.getElementById('emptyState');
+            const tableContainer = document.getElementById('tableContainer');
+            const countEl = document.getElementById('stockCount');
+
+            if(countEl) countEl.textContent = `(${filtered.length})`;
+
+            if (currentDayStocks.length === 0) {
+                if(emptyState) emptyState.classList.remove('hidden');
+                if(tableContainer) tableContainer.classList.add('hidden');
+            } else {
+                if(emptyState) emptyState.classList.add('hidden');
+                if(tableContainer) tableContainer.classList.remove('hidden');
+            }
+
+            if(!thead || !tbody) return;
+
+            // Dark Theme Header
+            let headerHTML = `
+                <tr class="bg-slate-800 text-xs font-bold text-slate-300 uppercase">
+                    <th class="px-3 py-3 border-r border-slate-700 w-14 bg-slate-800 sticky top-0 z-10">日期</th>
+                    <th class="px-3 py-3 border-r border-slate-700 w-16 bg-slate-800 sticky top-0 z-10">代號</th>
+                    <th class="px-4 py-3 border-r border-slate-700 w-24 bg-slate-800 sticky top-0 z-10">名稱</th>
+                    <th class="px-3 py-3 border-r border-slate-700 text-slate-400 font-medium w-20 bg-slate-800 sticky top-0 z-10">產業</th>
+            `;
+            
+            activeColumns.forEach(key => {
+                const conf = COLUMN_CONFIG[key];
+                headerHTML += `
+                    <th class="px-2 py-3 text-center bg-slate-800 border-r border-slate-700 w-16 sticky top-0 z-10">
+                        <span class="text-${conf.color}-400 text-[11px]">${conf.label}</span>
+                    </th>
+                `;
+            });
+            
+            headerHTML += `<th class="px-1 py-3 text-center w-10 bg-slate-800 sticky top-0 z-10"></th></tr>`;
+            thead.innerHTML = headerHTML;
+
+            tbody.innerHTML = '';
+            filtered.forEach(stock => {
+                const tr = document.createElement('tr');
+                tr.className = 'hover:bg-slate-800/50 group transition-colors border-b border-slate-800 last:border-0';
+                
+                let rowHTML = `
+                    <td class="px-3 py-2 font-mono text-slate-500 text-xs border-r border-slate-800 group-hover:border-slate-700 transition-colors">${formatDateShort(stock.dateStr)}</td>
+                    <td class="px-3 py-2 font-mono font-bold text-slate-300 text-sm border-r border-slate-800 group-hover:border-slate-700 transition-colors">
+                        <a href="https://tw.stock.yahoo.com/quote/${stock.code}" target="_blank" class="hover:text-blue-400 hover:underline decoration-blue-500/50 underline-offset-4">${stock.code}</a>
+                    </td>
+                    <td class="px-4 py-2 font-bold text-white text-sm border-r border-slate-800 group-hover:border-slate-700 transition-colors">
+                        <a href="https://tw.stock.yahoo.com/quote/${stock.code}" target="_blank" class="hover:text-blue-400 transition-colors">${stock.name}</a>
+                    </td>
+                    <td class="px-3 py-2 text-slate-400 text-xs border-r border-slate-800 group-hover:border-slate-700 transition-colors">
+                        ${stock.sector ? `<span class="bg-slate-800 text-slate-400 border border-slate-700 px-2 py-0.5 rounded text-[11px] font-medium">${stock.sector}</span>` : '-'}
+                    </td>
+                `;
+
+                activeColumns.forEach(key => {
+                    const conf = COLUMN_CONFIG[key];
+                    const isChecked = stock[key];
+                    const iconName = conf.icon; 
+                    
+                    rowHTML += `
+                        <td class="px-2 py-0 border-r border-slate-800 group-hover:border-slate-700 transition-colors ${isChecked ? `bg-${conf.color}-900/10` : ''}">
+                            <div onclick="toggleCondition('${stock.id}', '${key}')" class="flex justify-center items-center h-10 cursor-pointer hover:bg-slate-800 transition-colors">
+                                ${isChecked ? 
+                                    `<div class="w-6 h-6 rounded-full bg-${conf.color}-900/50 border border-${conf.color}-700 flex items-center justify-center shadow-[0_0_10px_rgba(0,0,0,0.2)]"><i data-lucide="${iconName}" class="w-3.5 h-3.5 text-${conf.color}-400"></i></div>` : 
+                                    `<div class="w-1.5 h-1.5 rounded-full bg-slate-800"></div>`
+                                }
+                            </div>
+                        </td>
+                    `;
+                });
+
+                rowHTML += `
+                    <td class="px-1 py-2 text-center">
+                        <button onclick="event.stopPropagation(); window.confirmDeleteStock('${stock.id}')" class="text-slate-600 hover:text-red-400 p-1.5 rounded-full hover:bg-red-900/20 transition-colors opacity-0 group-hover:opacity-100 cursor-pointer" title="刪除">
+                            <i data-lucide="trash-2" class="w-4 h-4"></i>
+                        </button>
+                    </td>
+                `;
+                
+                tr.innerHTML = rowHTML;
+                tbody.appendChild(tr);
+            });
+            lucide.createIcons();
+        }
+
+        document.querySelectorAll('#columnFilters input').forEach(input => {
+            input.addEventListener('change', renderTable);
+        });
+
+        document.getElementById('btnSelectAll').addEventListener('click', () => {
+            document.querySelectorAll('#columnFilters input').forEach(cb => cb.checked = true);
+            renderTable();
+        });
+        document.getElementById('btnSelectNone').addEventListener('click', () => {
+            document.querySelectorAll('#columnFilters input').forEach(cb => cb.checked = false);
+            renderTable();
+        });
+
+        document.getElementById('toggleSortBtn').addEventListener('click', () => {
+            sortMethod = sortMethod === 'code' ? 'time' : 'code';
+            renderTable();
+        });
+
+        function renderSummary() {
+            const currentDayStocks = stocks.filter(s => s.dateStr === selectedDate);
+            
+            const createBadges = (items, color) => {
+                if (items.length === 0) return `<span class="text-slate-700 text-[10px] py-0.5">--</span>`;
+                return items.map(s => 
+                    `<span class="bg-${color}-900/30 text-${color}-300 px-1.5 py-0.5 rounded text-[10px] border border-${color}-800 font-bold hover:bg-${color}-900/50 transition-colors cursor-default">${s.code} ${s.name}</span>`
+                ).join('');
+            };
+
+            const ids = {
+                'summaryBreakMonth': 'breakMonth',
+                'summaryBreakQuarter': 'breakQuarter',
+                'summaryMaEntangle': 'maEntangle',
+                'summaryWaitBreakMonth': 'waitBreakMonth',
+                'summaryWaitBreakQuarter': 'waitBreakQuarter',
+                'summaryBearishTrend': 'bearishTrend'
+            };
+            const colors = {
+                'breakMonth': 'red',
+                'breakQuarter': 'blue',
+                'maEntangle': 'purple',
+                'waitBreakMonth': 'orange',
+                'waitBreakQuarter': 'pink',
+                'bearishTrend': 'green'
+            };
+
+            for (const [id, key] of Object.entries(ids)) {
+                const el = document.getElementById(id);
+                if (el) {
+                    el.innerHTML = createBadges(currentDayStocks.filter(s => s[key]), colors[key]);
+                }
+            }
+        }
+
+        window.toggleCondition = async (id, field) => {
+            if (!user) return;
+            const s = stocks.find(s => s.id === id);
+            if (!s) return;
+            const payload = { [field]: !s[field] };
+            await saveStockData(id, payload, true);
+        };
+
+        window.confirmDeleteStock = (id) => {
+            stockToDeleteId = id;
+            toggleModal('deleteConfirmModal', true);
+        };
+
+        document.getElementById('confirmDeleteBtn').addEventListener('click', async () => {
+            if (!user || !stockToDeleteId) return;
+            try {
+                await removeStockData(stockToDeleteId);
+                toggleModal('deleteConfirmModal', false);
+                stockToDeleteId = null;
+                showToast('已刪除股票', 'success');
+            } catch (err) {
+                console.error("Delete failed", err);
+                showToast("刪除失敗，請稍後再試", "error");
+            }
+        });
+
+        document.getElementById('datePicker').addEventListener('change', (e) => {
+            selectedDate = e.target.value;
+            renderApp();
+        });
+        document.getElementById('prevDate').addEventListener('click', () => changeDate(-1));
+        document.getElementById('nextDate').addEventListener('click', () => changeDate(1));
+
+        function changeDate(offset) {
+            const d = new Date(selectedDate);
+            d.setDate(d.getDate() + offset);
+            const offsetTime = d.getTimezoneOffset() * 60000;
+            selectedDate = new Date(d.getTime() - offsetTime).toISOString().slice(0, 10);
+            renderApp();
+        }
+
+        document.getElementById('searchInput').addEventListener('input', renderTable);
+
+        document.getElementById('loadDefaultsBtn').addEventListener('click', async () => {
+            if (!user) { showToast('請稍候，資料庫連線中...', 'info'); return; }
+            
+            if (useLocalMode) {
+                 DEFAULT_STOCKS.forEach(stock => {
+                    const stockId = `${selectedDate}-${stock.code}`;
+                    const payload = {
+                        ...stock,
+                        dateStr: selectedDate,
+                        breakMonth: false,
+                        breakQuarter: false,
+                        maEntangle: false,
+                        waitBreakMonth: false,
+                        waitBreakQuarter: false,
+                        bearishTrend: false,
+                        createdAt: new Date().toISOString()
+                    };
+                    saveStockData(stockId, payload, true);
+                });
+                showToast('已載入範例清單 (Local)', 'success');
+                return;
+            }
+
+            const batch = writeBatch(db);
+            DEFAULT_STOCKS.forEach(stock => {
+                const stockId = `${selectedDate}-${stock.code}`;
+                const ref = doc(db, 'artifacts', appId, 'users', user.uid, 'stocks', stockId);
+                batch.set(ref, {
+                    ...stock,
+                    dateStr: selectedDate,
+                    breakMonth: false,
+                    breakQuarter: false,
+                    maEntangle: false,
+                    waitBreakMonth: false,
+                    waitBreakQuarter: false,
+                    bearishTrend: false,
+                    createdAt: serverTimestamp()
+                }, { merge: true });
+            });
+            await batch.commit();
+            showToast('已載入範例清單', 'success');
+        });
+
+        document.getElementById('copySummaryBtn').addEventListener('click', () => {
+            const currentDayStocks = stocks.filter(s => s.dateStr === selectedDate);
+            const [y, m, d] = selectedDate.split('-');
+            let summary = `【${y}/${m}/${d} 即時技術面觀察】\n`;
+
+            const bm = currentDayStocks.filter(s => s.breakMonth);
+            const bq = currentDayStocks.filter(s => s.breakQuarter);
+            const ma = currentDayStocks.filter(s => s.maEntangle);
+            const wm = currentDayStocks.filter(s => s.waitBreakMonth);
+            const wq = currentDayStocks.filter(s => s.waitBreakQuarter);
+            const bt = currentDayStocks.filter(s => s.bearishTrend);
+
+            if (bm.length) summary += `\n📈 突破月線:\n${bm.map(s => `${s.code} ${s.name}`).join('、')}\n`;
+            if (bq.length) summary += `\n🚀 突破季線:\n${bq.map(s => `${s.code} ${s.name}`).join('、')}\n`;
+            if (ma.length) summary += `\n🌀 均線糾結突破:\n${ma.map(s => `${s.code} ${s.name}`).join('、')}\n`;
+            if (wm.length) summary += `\n⏰ 等待月線:\n${wm.map(s => `${s.code} ${s.name}`).join('、')}\n`;
+            if (wq.length) summary += `\n⏰ 等待季線:\n${wq.map(s => `${s.code} ${s.name}`).join('、')}\n`;
+            if (bt.length) summary += `\n📉 空方趨勢:\n${bt.map(s => `${s.code} ${s.name}`).join('、')}\n`;
+            
+            if (!bm.length && !bq.length && !ma.length && !wm.length && !wq.length && !bt.length) summary += "\n今日尚無符合條件的觀察股。";
+
+            const textarea = document.createElement('textarea');
+            textarea.value = summary;
+            document.body.appendChild(textarea);
+            textarea.select();
+            document.execCommand('copy');
+            document.body.removeChild(textarea);
+
+            showToast("已複製摘要！", "success");
+        });
+
+        function toggleModal(id, show) {
+            const el = document.getElementById(id);
+            if (show) {
+                el.classList.remove('hidden');
+                setTimeout(() => el.classList.add('active'), 10);
+            } else {
+                el.classList.remove('active');
+                setTimeout(() => el.classList.add('hidden'), 200);
+            }
+        }
+
+        document.querySelectorAll('.close-modal').forEach(btn => {
+            btn.addEventListener('click', (e) => {
+                const modal = e.target.closest('.modal');
+                toggleModal(modal.id, false);
+            });
+        });
+
+        const getStockInfo = (code) => {
+            return userDictionary[code] || BUILTIN_STOCKS[code] || { name: '', sector: '' };
+        };
+
+        const quickConditions = { breakMonth: false, breakQuarter: false, maEntangle: false, waitBreakMonth: false, waitBreakQuarter: false, bearishTrend: false };
+
+        document.getElementById('quickStockCode').addEventListener('input', (e) => {
+            const val = e.target.value;
+            document.getElementById('quickAddBtn').disabled = !val;
+            
+            const info = getStockInfo(val);
+            if (info.name) {
+                document.getElementById('quickStockName').value = info.name;
+                document.getElementById('quickStockSector').value = info.sector || '';
+                document.getElementById('quickNotFoundMsg').classList.add('hidden');
+            } else {
+                document.getElementById('quickStockName').value = '';
+                document.getElementById('quickStockSector').value = '';
+                if (val.length >= 4) document.getElementById('quickNotFoundMsg').classList.remove('hidden');
+                else document.getElementById('quickNotFoundMsg').classList.add('hidden');
+            }
+        });
+        
+        document.getElementById('quickStockCode').addEventListener('keydown', (e) => {
+             if (e.key === 'Enter') {
+                e.preventDefault(); 
+                if (!document.getElementById('quickAddBtn').disabled) {
+                    document.getElementById('quickAddBtn').click();
+                }
+             }
+        });
+
+        document.querySelectorAll('.quick-condition-btn').forEach(btn => {
+            btn.addEventListener('click', () => {
+                const key = btn.dataset.key;
+                quickConditions[key] = !quickConditions[key];
+                updateBtnState(btn, quickConditions[key], 'quick');
+            });
+        });
+
+        document.getElementById('quickAddForm').addEventListener('submit', async (e) => {
+            e.preventDefault();
+            if (!user) { showToast('請稍候，資料庫連線中...', 'info'); return; }
+            
+            const code = document.getElementById('quickStockCode').value;
+            let name = document.getElementById('quickStockName').value;
+            let sector = document.getElementById('quickStockSector').value;
+            
+            if (!code) return;
+            if (!name) name = code;
+
+            const stockId = `${selectedDate}-${code}`;
+            const payload = {
+                code, name, sector, dateStr: selectedDate,
+                createdAt: useLocalMode ? new Date().toISOString() : serverTimestamp()
+            };
+            for (const [key, value] of Object.entries(quickConditions)) {
+                if (value) payload[key] = true;
+            }
+
+            try {
+                await saveStockData(stockId, payload, true);
+                
+                document.getElementById('quickStockCode').value = '';
+                document.getElementById('quickStockName').value = '';
+                document.getElementById('quickStockSector').value = '';
+                document.getElementById('quickAddBtn').disabled = true;
+                
+                // NO RESET
+                
+                showToast(`已新增 ${name}`, 'success');
+                document.getElementById('quickStockCode').focus();
+
+            } catch (err) {
+                console.error(err);
+                showToast('新增失敗', 'error');
+            }
+        });
+
+        const batchConditions = { breakMonth: false, breakQuarter: false, maEntangle: false, waitBreakMonth: false, waitBreakQuarter: false, bearishTrend: false };
+        
+        document.querySelectorAll('.batch-condition-btn').forEach(btn => {
+            btn.addEventListener('click', () => {
+                const key = btn.dataset.key;
+                batchConditions[key] = !batchConditions[key];
+                updateBtnState(btn, batchConditions[key], 'batch');
+            });
+        });
+
+        function updateBtnState(btn, active, type) {
+            const color = btn.dataset.color;
+            const idClass = type === 'quick' ? 'quick-condition-btn' : 'batch-condition-btn';
+            const baseClass = `${idClass} text-[11px] font-bold px-3 py-2 rounded-md border transition-all cursor-pointer flex-1 shadow-sm`;
+            
+            if (active) {
+                btn.className = `${baseClass} bg-${color}-900/40 text-${color}-300 border-${color}-700 ring-2 ring-${color}-500/50 ring-offset-1 ring-offset-slate-900`;
+            } else {
+                btn.className = `${baseClass} bg-slate-800 text-slate-500 border-slate-700 hover:bg-slate-700 hover:text-slate-300`;
+            }
+        }
+
+        document.getElementById('batchInput').addEventListener('input', (e) => {
+            document.getElementById('addBatchBtn').disabled = !e.target.value.trim();
+        });
+
+        document.getElementById('addBatchBtn').addEventListener('click', async () => {
+            if (!user) { showToast('請稍候，資料庫連線中...', 'info'); return; }
+            const input = document.getElementById('batchInput').value;
+            if (!input.trim()) return;
+
+            const lines = input.split(/[\n, ]+/).map(l => l.trim()).filter(l => l);
+            
+            const resetUI = (count) => {
+                document.getElementById('batchInput').value = '';
+                document.getElementById('addBatchBtn').disabled = true;
+                
+                ['breakMonth', 'breakQuarter', 'maEntangle', 'waitBreakMonth', 'waitBreakQuarter', 'bearishTrend'].forEach(k => {
+                    batchConditions[k] = false;
+                });
+                document.querySelectorAll('.batch-condition-btn').forEach(btn => {
+                    updateBtnState(btn, false, 'batch');
+                });
+                showToast(`已批次新增 ${count} 筆`, 'success');
+            };
+
+            if (useLocalMode) {
+                 let count = 0;
+                 for (const codeRaw of lines) {
+                    const match = codeRaw.match(/^(\d{3,6})/); 
+                    const code = match ? match[1] : codeRaw;
+                    
+                    if (code) {
+                        let name = code;
+                        let sector = '';
+                        const info = getStockInfo(code);
+                        if (info.name) {
+                            name = info.name;
+                            sector = info.sector || '';
+                        }
+
+                        const stockId = `${selectedDate}-${code}`;
+                        const payload = {
+                            code, name, sector, dateStr: selectedDate,
+                            createdAt: new Date().toISOString()
+                        };
+                        for (const [key, value] of Object.entries(batchConditions)) {
+                            if (value) payload[key] = true;
+                        }
+                        
+                        await saveStockData(stockId, payload, true);
+                        count++;
+                    }
+                }
+                
+                if (count > 0) resetUI(count);
+                else showToast('沒有偵測到有效的代號', 'error');
+                return;
+            }
+
+            const batch = writeBatch(db);
+            let count = 0;
+
+            lines.forEach(codeRaw => {
+                const match = codeRaw.match(/^(\d{3,6})/); 
+                const code = match ? match[1] : codeRaw;
+                
+                if (code) {
+                    let name = code;
+                    let sector = '';
+                    const info = getStockInfo(code);
+                    if (info.name) {
+                        name = info.name;
+                        sector = info.sector || '';
+                    }
+
+                    const stockId = `${selectedDate}-${code}`;
+                    const ref = doc(db, 'artifacts', appId, 'users', user.uid, 'stocks', stockId);
+                    
+                    const payload = {
+                        code, name, sector, dateStr: selectedDate,
+                        createdAt: serverTimestamp()
+                    };
+                    for (const [key, value] of Object.entries(batchConditions)) {
+                        if (value) payload[key] = true;
+                    }
+
+                    batch.set(ref, payload, { merge: true });
+                    count++;
+                }
+            });
+
+            if (count > 0) {
+                try {
+                    await batch.commit();
+                    resetUI(count);
+                } catch (e) {
+                    console.error(e);
+                    showToast('新增失敗', 'error');
+                }
+            } else {
+                showToast('沒有偵測到有效的代號', 'error');
+            }
+        });
+
+        document.getElementById('openDictModal').addEventListener('click', () => {
+            if (!user) { showToast('請稍候，資料庫連線中...', 'info'); return; }
+            document.getElementById('dictInput').value = '';
+            document.getElementById('saveDictBtn').disabled = true;
+            document.getElementById('dictPreviewBadge').textContent = '預覽：將匯入 0 筆';
+            toggleModal('dictModal', true);
+        });
+
+        function updateDictCount() {
+            const el = document.getElementById('dbCountDisplay');
+            if (el) el.textContent = `自定義資料庫：${Object.keys(userDictionary).length} 筆`;
+        }
+
+        const parseDictInput = (input) => {
+            const lines = input.split(/\n/);
+            const valid = [];
+            lines.forEach(line => {
+                const cleanLine = line.trim();
+                if (!cleanLine) return;
+                const codeMatch = cleanLine.match(/(\d{3,6})/);
+                if (!codeMatch) return;
+                const code = codeMatch[1];
+                let rest = cleanLine.replace(code, '').trim();
+                const parts = rest.split(/[\s,\t]+/).filter(Boolean);
+                let name = '';
+                let sector = '';
+                if (parts.length > 0) {
+                    name = parts[0];
+                    if (parts.length > 1) {
+                        sector = parts[1];
+                    }
+                }
+                if (code && name) {
+                    valid.push({ code, name, sector });
+                }
+            });
+            return valid;
+        };
+
+        document.getElementById('dictInput').addEventListener('input', (e) => {
+            const validEntries = parseDictInput(e.target.value);
+            const badge = document.getElementById('dictPreviewBadge');
+            if (badge) badge.textContent = `預覽：將匯入 ${validEntries.length} 筆`;
+            document.getElementById('saveDictBtn').disabled = validEntries.length === 0;
+        });
+
+        document.getElementById('saveDictBtn').addEventListener('click', async () => {
+            if (!user) { showToast('請稍候，資料庫連線中...', 'info'); return; }
+            const input = document.getElementById('dictInput').value;
+            const btn = document.getElementById('saveDictBtn');
+            btn.textContent = '處理中...';
+            btn.disabled = true;
+
+            const validEntries = parseDictInput(input);
+            const CHUNK_SIZE = 450;
+            let successCount = 0;
+            
+            // For Local Mode
+            if (useLocalMode) {
+                validEntries.forEach(entry => {
+                    userDictionary[entry.code] = { name: entry.name, sector: entry.sector };
+                });
+                saveLocalDict();
+                showToast(`成功匯入 ${validEntries.length} 筆清單 (Local)`, 'success');
+                toggleModal('dictModal', false);
+                btn.textContent = '儲存自定義清單';
+                btn.disabled = false;
+                return;
+            }
+
+            try {
+                for (let i = 0; i < validEntries.length; i += CHUNK_SIZE) {
+                    const chunk = validEntries.slice(i, i + CHUNK_SIZE);
+                    const batch = writeBatch(db);
+                    chunk.forEach(entry => {
+                        const ref = doc(db, 'artifacts', appId, 'users', user.uid, 'stockDictionary', entry.code);
+                        batch.set(ref, { code: entry.code, name: entry.name, sector: entry.sector });
+                    });
+                    await batch.commit();
+                    successCount += chunk.length;
+                }
+                showToast(`成功匯入 ${successCount} 筆清單`, 'success');
+                toggleModal('dictModal', false);
+            } catch (e) {
+                console.error(e);
+                showToast('儲存失敗', 'error');
+            } finally {
+                btn.textContent = '儲存自定義清單';
+                btn.disabled = false;
+            }
+        });
+
+        // --- Backup/Restore ---
+        window.exportData = () => {
+            const dataStr = "data:text/json;charset=utf-8," + encodeURIComponent(JSON.stringify({ stocks, dictionary }));
+            const anchor = document.createElement('a');
+            anchor.setAttribute("href", dataStr);
+            anchor.setAttribute("download", `stock_diary_${currentDate}.json`);
+            document.body.appendChild(anchor);
+            anchor.click();
+            anchor.remove();
+        };
+
+        window.importData = (input) => {
+            const file = input.files[0];
+            if (!file) return;
+            const reader = new FileReader();
+            reader.onload = (e) => {
+                try {
+                    const data = JSON.parse(e.target.result);
+                    if (data.stocks) stocks = data.stocks;
+                    if (data.dictionary) Object.assign(dictionary, data.dictionary);
+                    saveData();
+                    localStorage.setItem('stock_diary_dict', JSON.stringify(dictionary));
+                    showToast('資料還原成功', 'success');
+                } catch(err) { showToast('檔案格式錯誤', 'error'); }
+            };
+            reader.readAsText(file);
+        };
+
+        lucide.createIcons();
+    </script>
+</body>
+</html>
