@@ -11,6 +11,9 @@
     <!-- Babel for JSX -->
     <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
     
+    <!-- SheetJS for Excel Export/Import -->
+    <script src="https://cdn.sheetjs.com/xlsx-0.20.1/package/dist/xlsx.full.min.js"></script>
+    
     <!-- Import Map for React modules -->
     <script type="importmap">
     {
@@ -30,6 +33,14 @@
         }
         .animate-fade-in-down {
             animation: fade-in-down 0.3s ease-out forwards;
+        }
+        
+        @keyframes bounce-in {
+            0% { transform: scale(0.9); opacity: 0; }
+            100% { transform: scale(1); opacity: 1; }
+        }
+        .animate-bounce-in {
+            animation: bounce-in 0.2s cubic-bezier(0.18, 0.89, 0.32, 1.28) forwards;
         }
         
         /* Scrollbar styling for dark mode */
@@ -69,12 +80,13 @@
     <div id="root"></div>
 
     <script type="text/babel" data-type="module">
-        import React, { useState, useEffect, useMemo } from 'react';
+        import React, { useState, useEffect, useMemo, useRef } from 'react';
         import { createRoot } from 'react-dom/client';
         import { 
             TrendingUp, Rocket, Sprout, Clock, BarChart2, Activity, 
             ArrowDownCircle, Trash2, Star, Copy, Search, Plus, 
-            Filter, X, PieChart, Target, AlertCircle, CheckCircle2, ArrowUpDown, RefreshCcw
+            Filter, X, PieChart, Target, AlertCircle, CheckCircle2, ArrowUpDown, RefreshCcw,
+            Download, Upload, AlertTriangle
         } from 'lucide-react';
 
         // --- 完整台股資料庫 ---
@@ -548,13 +560,13 @@
 
         // --- 策略定義 ---
         const STRATEGIES = [
-            { id: 'monthly_up', label: '月來越好', icon: TrendingUp, color: 'bg-red-500/20 text-red-300 border-red-500/50 shadow-red-500/20' },
-            { id: 'quarterly_gold', label: '季不可失', icon: Rocket, color: 'bg-orange-500/20 text-orange-300 border-orange-500/50 shadow-orange-500/20' },
-            { id: 'twist_flower', label: '麻花捲開花', icon: Sprout, color: 'bg-pink-500/20 text-pink-300 border-pink-500/50 shadow-pink-500/20' },
-            { id: 'wait_monthly', label: '等待月線', icon: Clock, color: 'bg-blue-500/20 text-blue-300 border-blue-500/50 shadow-blue-500/20' },
-            { id: 'wait_quarterly', label: '等待季線', icon: Activity, color: 'bg-indigo-500/20 text-indigo-300 border-indigo-500/50 shadow-indigo-500/20' },
-            { id: 'bull_obv', label: '多頭OBV', icon: BarChart2, color: 'bg-emerald-500/20 text-emerald-300 border-emerald-500/50 shadow-emerald-500/20' },
-            { id: 'bear_trend', label: '空方趨勢', icon: ArrowDownCircle, color: 'bg-gray-500/20 text-gray-300 border-gray-500/50 shadow-gray-500/20' },
+            { id: 'monthly_up', label: '月來越好', icon: TrendingUp, color: 'bg-red-900/30 text-red-400 border-red-500 shadow-[0_0_10px_rgba(239,68,68,0.4)]' },
+            { id: 'quarterly_gold', label: '季不可失', icon: Rocket, color: 'bg-orange-900/30 text-orange-400 border-orange-500 shadow-[0_0_10px_rgba(249,115,22,0.4)]' },
+            { id: 'twist_flower', label: '麻花捲開花', icon: Sprout, color: 'bg-pink-900/30 text-pink-400 border-pink-500 shadow-[0_0_10px_rgba(236,72,153,0.4)]' },
+            { id: 'wait_monthly', label: '等待月線', icon: Clock, color: 'bg-blue-900/30 text-blue-400 border-blue-500 shadow-[0_0_10px_rgba(59,130,246,0.4)]' },
+            { id: 'wait_quarterly', label: '等待季線', icon: Activity, color: 'bg-indigo-900/30 text-indigo-400 border-indigo-500 shadow-[0_0_10px_rgba(99,102,241,0.4)]' },
+            { id: 'bull_obv', label: '多頭OBV', icon: BarChart2, color: 'bg-emerald-900/30 text-emerald-400 border-emerald-500 shadow-[0_0_10px_rgba(16,185,129,0.4)]' },
+            { id: 'bear_trend', label: '空方趨勢', icon: ArrowDownCircle, color: 'bg-slate-800 text-slate-300 border-slate-500 shadow-[0_0_10px_rgba(148,163,184,0.4)]' },
         ];
 
         function RyanStockJournal() {
@@ -566,7 +578,8 @@
             const [filterStrategy, setFilterStrategy] = useState(null);
 
             const today = new Date().toISOString().split('T')[0];
-            
+            const fileInputRef = useRef(null);
+
             // Input Form State
             const [inputDate, setInputDate] = useState(today);
             const [inputCode, setInputCode] = useState('');
@@ -580,8 +593,9 @@
             const [showTrackedOnly, setShowTrackedOnly] = useState(false);
             const [sortConfig, setSortConfig] = useState({ key: 'date', direction: 'desc' });
 
-            // Toast Notification State
+            // Toast & Modal State
             const [toast, setToast] = useState(null);
+            const [confirmModal, setConfirmModal] = useState({ show: false, title: '', message: '', onConfirm: () => {} });
 
             // --- Effects ---
             useEffect(() => {
@@ -633,7 +647,6 @@
 
                 if (exists) {
                     showToast('error', "此策略已存在於該日期的紀錄中");
-                    // 清空欄位
                     setInputCode('');
                     setInputName('');
                     setInputIndustry('');
@@ -662,14 +675,20 @@
             };
 
             const handleDeleteLog = (id) => {
-                setLogs(logs.filter(log => log.id !== id));
+                setLogs(currentLogs => currentLogs.filter(log => log.id !== id));
             };
 
             const handleDeleteGroup = (date, code) => {
-                if(window.confirm(`確定要刪除 ${date} ${code} 的所有紀錄嗎？`)) {
-                    setLogs(logs.filter(log => !(log.date === date && log.code === code)));
-                    showToast('success', '已刪除紀錄');
-                }
+                setConfirmModal({
+                    show: true,
+                    title: '確認刪除',
+                    message: `確定要刪除 ${date} ${code} 的所有紀錄嗎？`,
+                    onConfirm: () => {
+                        setLogs(currentLogs => currentLogs.filter(log => !(log.date === date && log.code === code)));
+                        showToast('success', '已刪除紀錄');
+                        setConfirmModal({ show: false });
+                    }
+                });
             };
 
             const handleToggleTrackGroup = (date, code, currentStatus) => {
@@ -687,6 +706,70 @@
                     direction = 'desc';
                 }
                 setSortConfig({ key, direction });
+            };
+
+            const handleExport = () => {
+                try {
+                    const ws = XLSX.utils.json_to_sheet(logs);
+                    const wb = XLSX.utils.book_new();
+                    XLSX.utils.book_append_sheet(wb, ws, "StockLogs");
+                    XLSX.writeFile(wb, `RyansStockJournal_${today}.xlsx`);
+                    showToast('success', '匯出成功');
+                } catch (error) {
+                    console.error("Export failed:", error);
+                    showToast('error', '匯出失敗');
+                }
+            };
+
+            const handleImportClick = () => {
+                // If logs exist, confirm overwrite
+                if (logs.length > 0) {
+                     setConfirmModal({
+                        show: true,
+                        title: '確認匯入',
+                        message: `確定要匯入嗎？這將覆蓋目前的 ${logs.length} 筆紀錄。建議先匯出備份。`,
+                        onConfirm: () => {
+                            setConfirmModal({ show: false });
+                            fileInputRef.current.click();
+                        }
+                    });
+                } else {
+                    fileInputRef.current.click();
+                }
+            };
+
+            const handleImport = (e) => {
+                const file = e.target.files[0];
+                if (!file) return;
+
+                const reader = new FileReader();
+                reader.onload = (evt) => {
+                    try {
+                        const bstr = evt.target.result;
+                        const wb = XLSX.read(bstr, { type: 'binary' });
+                        const wsname = wb.SheetNames[0];
+                        const ws = wb.Sheets[wsname];
+                        const data = XLSX.utils.sheet_to_json(ws);
+                        
+                        const newLogs = data.map(row => ({
+                            ...row,
+                            strategyId: row.strategyId || STRATEGIES.find(s => s.label === row.strategyLabel)?.id || 'monthly_up',
+                            id: row.id || Date.now() + Math.random() 
+                        }));
+
+                        if (newLogs.length > 0) {
+                            setLogs(newLogs);
+                            showToast('success', `匯入成功，共 ${newLogs.length} 筆紀錄`);
+                        } else {
+                            showToast('error', '匯入檔案無資料');
+                        }
+                    } catch (error) {
+                        console.error("Import failed:", error);
+                        showToast('error', '匯入失敗，格式錯誤');
+                    }
+                };
+                reader.readAsBinaryString(file);
+                e.target.value = ''; 
             };
 
             // --- Derived State ---
@@ -839,6 +922,33 @@
             return (
                 <div className="min-h-screen bg-slate-950 text-slate-200 font-sans pb-20 selection:bg-blue-500/30 relative">
                     
+                    {/* Confirm Modal */}
+                    {confirmModal.show && (
+                        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/60 backdrop-blur-sm">
+                            <div className="bg-slate-900 border border-slate-700 rounded-2xl p-6 w-full max-w-sm shadow-2xl space-y-4 animate-bounce-in">
+                                <div className="flex items-center gap-3 text-amber-500 mb-2">
+                                    <AlertTriangle size={28} />
+                                    <h3 className="text-xl font-bold text-white">{confirmModal.title}</h3>
+                                </div>
+                                <p className="text-slate-300 leading-relaxed">{confirmModal.message}</p>
+                                <div className="flex gap-3 justify-end pt-4">
+                                    <button 
+                                        onClick={() => setConfirmModal({ ...confirmModal, show: false })} 
+                                        className="px-4 py-2 rounded-lg bg-slate-800 text-slate-300 hover:bg-slate-700 transition-colors"
+                                    >
+                                        取消
+                                    </button>
+                                    <button 
+                                        onClick={confirmModal.onConfirm} 
+                                        className="px-4 py-2 rounded-lg bg-red-600 text-white hover:bg-red-500 transition-colors font-bold shadow-lg shadow-red-900/20"
+                                    >
+                                        確認執行
+                                    </button>
+                                </div>
+                            </div>
+                        </div>
+                    )}
+
                     {toast && (
                         <div className={`fixed top-6 left-1/2 -translate-x-1/2 z-50 px-6 py-3 rounded-xl shadow-2xl backdrop-blur-md border flex items-center gap-3 animate-fade-in-down transition-all
                         ${toast.type === 'success' ? 'bg-emerald-900/80 border-emerald-500/50 text-emerald-200' : 'bg-red-900/80 border-red-500/50 text-red-200'}`}>
@@ -1090,6 +1200,29 @@
                                             複製結果
                                         </button>
                                 </div>
+                                <div className="grid grid-cols-2 gap-3 pt-2 border-t border-slate-800">
+                                    <button 
+                                        onClick={handleExport}
+                                        className="flex items-center justify-center gap-2 py-3 bg-blue-600/10 hover:bg-blue-600/20 text-blue-400 border border-blue-500/30 hover:border-blue-500/50 rounded-xl text-sm font-medium transition-all"
+                                    >
+                                        <Download size={16} />
+                                        匯出紀錄
+                                    </button>
+                                    <button 
+                                        onClick={handleImportClick}
+                                        className="flex items-center justify-center gap-2 py-3 bg-slate-800 hover:bg-slate-700 text-slate-300 border border-slate-600 hover:border-slate-500 rounded-xl text-sm font-medium transition-all"
+                                    >
+                                        <Upload size={16} />
+                                        匯入紀錄
+                                    </button>
+                                    <input 
+                                        type="file" 
+                                        ref={fileInputRef} 
+                                        onChange={handleImport} 
+                                        accept=".xlsx, .xls"
+                                        className="hidden" 
+                                    />
+                                </div>
                             </div>
                             </div>
 
@@ -1194,7 +1327,11 @@
                                                             <Icon size={12} />
                                                             {stratDef.label}
                                                             <button 
-                                                                onClick={() => handleDeleteLog(strat.id)}
+                                                                type="button"
+                                                                onClick={(e) => {
+                                                                    e.stopPropagation();
+                                                                    handleDeleteLog(strat.id);
+                                                                }}
                                                                 className="ml-1 opacity-60 hover:opacity-100 hover:text-white transition-opacity"
                                                             >
                                                                 <X size={10} />
@@ -1212,7 +1349,11 @@
                                         <td className="py-4 px-6 text-right">
                                             <div className="flex items-center justify-end gap-3 opacity-60 group-hover:opacity-100 transition-opacity">
                                                 <button 
-                                                    onClick={() => handleToggleTrackGroup(group.date, group.code, group.isTracked)}
+                                                    type="button"
+                                                    onClick={(e) => {
+                                                        e.stopPropagation();
+                                                        handleToggleTrackGroup(group.date, group.code, group.isTracked);
+                                                    }}
                                                     className={`p-2 rounded-lg transition-all duration-300 ${
                                                         group.isTracked 
                                                         ? 'text-amber-400 bg-amber-400/10 shadow-[0_0_10px_rgba(251,191,36,0.2)]' 
@@ -1223,7 +1364,11 @@
                                                     <Star size={18} fill={group.isTracked ? "currentColor" : "none"} />
                                                 </button>
                                                 <button 
-                                                    onClick={() => handleDeleteGroup(group.date, group.code)}
+                                                    type="button"
+                                                    onClick={(e) => {
+                                                        e.stopPropagation();
+                                                        handleDeleteGroup(group.date, group.code);
+                                                    }}
                                                     className="p-2 text-slate-500 hover:text-red-400 hover:bg-red-400/10 rounded-lg transition-colors"
                                                     title="刪除整筆"
                                                 >
