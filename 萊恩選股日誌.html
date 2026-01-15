@@ -557,7 +557,7 @@
             '9960':{name:'邁達康',industry:'運動休閒'},'9962':{name:'有益',industry:'鋼鐵'},'910322':{name:'康師傅-DR',industry:'存託憑證'},'910861':{name:'神州-DR',industry:'存託憑證'},
             '911608':{name:'明輝-DR',industry:'存託憑證'},'911622':{name:'泰聚亨-DR',industry:'存託憑證'},'911868':{name:'同方友友-DR',industry:'存託憑證'},'912000':{name:'晨訊科-DR',industry:'存託憑證'},
         };
-
+        
         // --- 策略定義 ---
         const STRATEGIES = [
             { id: 'monthly_up', label: '月來越好', icon: TrendingUp, color: 'bg-red-900/30 text-red-400 border-red-500 shadow-[0_0_10px_rgba(239,68,68,0.4)]' },
@@ -568,7 +568,7 @@
             { id: 'bull_obv', label: '多頭OBV', icon: BarChart2, color: 'bg-emerald-900/30 text-emerald-400 border-emerald-500 shadow-[0_0_10px_rgba(16,185,129,0.4)]' },
             { id: 'bear_trend', label: '空方趨勢', icon: ArrowDownCircle, color: 'bg-slate-800 text-slate-300 border-slate-500 shadow-[0_0_10px_rgba(148,163,184,0.4)]' },
         ];
-
+        
         function RyanStockJournal() {
             // --- State ---
             const [logs, setLogs] = useState(() => {
@@ -621,6 +621,22 @@
                     setInputIndustry('');
                 }
             }, [inputCode]);
+            
+            // Modal Keyboard Support
+            useEffect(() => {
+                if (confirmModal.show) {
+                    const handleKeyDown = (e) => {
+                        if (e.key === 'Enter') {
+                            e.preventDefault();
+                            confirmModal.onConfirm();
+                        } else if (e.key === 'Escape') {
+                            setConfirmModal(prev => ({ ...prev, show: false }));
+                        }
+                    };
+                    window.addEventListener('keydown', handleKeyDown);
+                    return () => window.removeEventListener('keydown', handleKeyDown);
+                }
+            }, [confirmModal]);
 
             // --- Handlers ---
             const showToast = (type, message) => {
